@@ -9,7 +9,8 @@ import threading
 import random
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler
+from telegram.ext.filters import Filters
 from telegram.error import Conflict, TelegramError, NetworkError
 import requests
 
