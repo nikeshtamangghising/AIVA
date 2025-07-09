@@ -11,6 +11,11 @@ from datetime import datetime
 import sys
 sys.path.insert(0, '')  # Ensure current directory is in path
 import imghdr_compat as imghdr  # Add before telegram import
+# MUST be first import - provides imghdr compatibility
+import imghdr_compat
+import sys
+sys.modules['imghdr'] = imghdr_compat
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
 from telegram.error import Conflict, TelegramError, NetworkError
