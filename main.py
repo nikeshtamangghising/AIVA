@@ -1,5 +1,6 @@
 import re
 import logging
+import asyncio
 import os
 import time
 import csv
@@ -2220,7 +2221,7 @@ def check_bot_already_running(bot_token):
         return False
 
 
-def initialize_bot_safely():
+async def initialize_bot_safely():
     """Initialize the bot with comprehensive conflict prevention."""
     global bot_updater
     
@@ -2236,28 +2237,29 @@ def initialize_bot_safely():
         cleanup_bot = Bot(BOT_TOKEN)
         
         # First delete webhook and drop all pending updates
-        cleanup_bot.delete_webhook(drop_pending_updates=True)
+        await cleanup_bot.delete_webhook(drop_pending_updates=True)
         logging.info("Deleted webhook and dropped pending updates")
-        time.sleep(2)
+        await asyncio.sleep(2)
         
         # Then force a getUpdates call with short timeout to reset the API state
         try:
-            cleanup_bot.get_updates(offset=-1, limit=1, timeout=1)
+            await cleanup_bot.get_updates(offset=-1, limit=1, timeout=1)
             logging.info("Reset API state with get_updates call")
         except Exception as update_error:
             logging.info(f"Expected error during get_updates reset: {update_error}")
         
-        time.sleep(2)
+        await asyncio.sleep(2)
         
         # Final webhook deletion to be sure
-        cleanup_bot.delete_webhook(drop_pending_updates=True)
+        await cleanup_bot.delete_webhook(drop_pending_updates=True)
         logging.info("Final webhook cleanup complete")
         
         # Wait to ensure cleanup is complete
-        time.sleep(3)
+        await asyncio.sleep(3)
         
-        # Create updater with proper error handling
+        # Create updater with proper error handling (PTB v20+ syntax)
         updater = Updater(
+            token=BOT_TOKEN,
             BOT_TOKEN, 
             request_kwargs={
                 'read_timeout': 30,
@@ -2307,7 +2309,7 @@ def main():
     while restart_attempts < max_restarts:
         try:
             # Initialize the bot with conflict prevention
-            updater = initialize_bot_safely()
+            updater = asyncio.run(initialize_bot_safely())
             if not updater:
                 logging.error("Failed to initialize bot safely. Waiting to retry...")
                 time.sleep(30)  # Wait before retry
