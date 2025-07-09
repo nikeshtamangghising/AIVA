@@ -2226,12 +2226,8 @@ async def initialize_bot_safely():
     try:
         logging.info("Initializing bot with conflict prevention...")
         
-        # First, create the bot instance with timeouts
-        bot = Bot(
-            token=BOT_TOKEN,
-            read_timeout=30,
-            connect_timeout=30
-        )
+        # Create the bot instance
+        bot = Bot(token=BOT_TOKEN)
         
         # Clean up any existing webhook
         await bot.delete_webhook(drop_pending_updates=True)
