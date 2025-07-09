@@ -174,34 +174,14 @@ def create_socket_lock():
 
 def graceful_shutdown():
     """Perform a graceful shutdown of the bot."""
-    global bot_updater, SHUTDOWN_IN_PROGRESS
-    
+    global SHUTDOWN_IN_PROGRESS
     if SHUTDOWN_IN_PROGRESS:
         return
-        
     SHUTDOWN_IN_PROGRESS = True
     logging.info("Starting graceful shutdown...")
-    
-    try:
-        # Stop the updater
-        if bot_updater:
-            try:
-                if hasattr(bot_updater, 'bot'):
-                    try:
-                        bot_updater.bot.delete_webhook(drop_pending_updates=True)
-                    except:
-                        pass
-                
-                bot_updater.stop()
-                logging.info("Stopped updater")
-            except:
-                pass
-            
-    except Exception as e:
-        logging.error(f"Error during shutdown: {e}")
-    finally:
-        SHUTDOWN_IN_PROGRESS = False
-        logging.info("Shutdown complete")
+    # With Application, shutdown is handled by the event loop and signal handler
+    SHUTDOWN_IN_PROGRESS = False
+    logging.info("Shutdown complete")
 
 def error_handler(update, context):
     """Handle errors in the dispatcher with immediate termination for conflicts."""
