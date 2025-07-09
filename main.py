@@ -2291,14 +2291,12 @@ def signal_handler(sig, frame):
 
 if __name__ == "__main__":
     try:
-        # Register signal handlers for graceful shutdown
         import signal
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        
-        # Start the bot - no process checks needed as we now use API-based checks
         logging.info("Starting bot...")
-        main()
+        import asyncio
+        asyncio.run(main_async())
     except Exception as e:
         logging.critical(f"Critical error during startup: {e}")
         import traceback
