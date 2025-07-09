@@ -226,7 +226,7 @@ def error_handler(update, context):
         import traceback
         logging.error(f"Error traceback: {traceback.format_exc()}")
 
-def start(update: Update, context) -> None:
+async def start(update: Update, context) -> None:
     """Send a message when the command /start is issued."""
     user_id = update.effective_user.id
     username = update.effective_user.username or "there"
@@ -238,7 +238,7 @@ def start(update: Update, context) -> None:
     if user_id not in user_preferences:
         user_preferences[user_id] = DEFAULT_PREFERENCES.copy()
 
-    update.message.reply_text(
+    await update.message.reply_text(
         f"Hi {username}! I'm a Decimal Stripper Bot that can separate amounts and charges.\n\n"
         "Forward me messages containing numbers. I'll automatically categorize:\n"
         f"- Amounts (values > {AMOUNT_THRESHOLD}): decimal parts will be stripped\n"
@@ -248,10 +248,10 @@ def start(update: Update, context) -> None:
         "Use /clear to start a new collection.\n"
         "Use /help for more information."
     )
-def help_command(update: Update, context) -> None:
+async def help_command(update: Update, context) -> None:
     """Send a message when the command /help is issued."""
     # This docstring should be indented to match the function definition
-    update.message.reply_text(
+    await update.message.reply_text(
         "Here's how to use this bot:\n\n"
         "📝 <b>Basic Commands</b>:\n"
         "/start - Begin collecting messages\n"
@@ -291,14 +291,14 @@ def help_command(update: Update, context) -> None:
         parse_mode='HTML'
     )
 
-def collect_message(update: Update, context) -> None:
+async def collect_message(update: Update, context) -> None:
     """Collect forwarded messages without replying to each one."""
     user_id = update.effective_user.id
     text = update.message.text
 
     if not text:
         # Only respond if the message has no text
-        update.message.reply_text("Please forward me a text message.")
+        await update.message.reply_text("Please forward me a text message.")
         return
 
     # Initialize message collection for this user if not already done
@@ -368,13 +368,13 @@ def collect_message(update: Update, context) -> None:
                     preview_numbers.append(processed_number)
 
             preview = ", ".join(preview_numbers)
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"✅ Message collected! Found these numbers: {preview}\n"
                 f"📝 You now have {len(user_messages[user_id])} messages in your collection.\n"
                 "Forward more messages or use /process when ready."
             )
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"✅ Message collected! (No numbers found)\n"
                 f"📝 You now have {len(user_messages[user_id])} messages in your collection.\n"
                 "Forward more messages or use /process when ready."
@@ -426,12 +426,12 @@ def extract_number_value(match, decimal_separator, full_text):
 
     return currency, number_str, processed_number, value, has_decimal
 
-def process_command(update: Update, context) -> None:
+async def process_command(update: Update, context) -> None:
     """Process all collected messages and separate amounts (>50) and charges (≤50)."""
     user_id = update.effective_user.id
 
     if user_id not in user_messages or not user_messages[user_id]:
-        update.message.reply_text("❗ No messages collected yet. Forward some messages first.")
+        await update.message.reply_text("❗ No messages collected yet. Forward some messages first.")
         return
 
     # Get user preferences
@@ -506,7 +506,7 @@ def process_command(update: Update, context) -> None:
                 "Use /export_csv or /export_json for detailed outputs."
             )
 
-            update.message.reply_text(response, parse_mode='HTML')
+            await update.message.reply_text(response, parse_mode='HTML')
 
         elif output_format == 'detailed':
             amounts_details = []
@@ -538,9 +538,9 @@ def process_command(update: Update, context) -> None:
                     "The full detailed output is too long to display. Please use /export_csv or /export_json for the complete results."
                 )
 
-            update.message.reply_text(response, parse_mode='HTML')
+            await update.message.reply_text(response, parse_mode='HTML')
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             f"❗ I couldn't find any numbers in your collected messages.\n"
             f"Try changing the decimal separator in /settings if your numbers use a different format."
         )
@@ -551,7 +551,7 @@ user_csv_files = {}
 # Dictionary to store conversation states for each user
 user_states = {}
 
-def show_bank_selection(update: Update, context) -> None:
+async def show_bank_selection(update: Update, context) -> None:
     """Show bank selection keyboard for CSV export with improved categorization and layout."""
     # Get user ID
     if hasattr(update, 'callback_query') and update.callback_query is not None:
@@ -590,7 +590,7 @@ def show_bank_selection(update: Update, context) -> None:
     # Add a separator
     keyboard.append([InlineKeyboardButton("───────── NEPAL BANKS ─────────", callback_data="header_no_action")])
 
-def show_bank_selection_with_done(update: Update, context) -> None:
+async def show_bank_selection_with_done(update: Update, context) -> None:
     """Show bank selection keyboard with a Done button to exit the process."""
     # Get user ID
     if hasattr(update, 'callback_query') and update.callback_query is not None:
@@ -680,10 +680,10 @@ def show_bank_selection_with_done(update: Update, context) -> None:
     
     # Use the appropriate method based on the update type
     if hasattr(update, 'message'):
-        update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
+        await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
     else:
         # This is for handling cases where we need to send a new message after a callback query
-        context.bot.send_message(chat_id=user_id, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
+        await context.bot.send_message(chat_id=user_id, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
     for i, bank in enumerate(NEPAL_BANKS):
         if i % 3 == 0 and i > 0:
             keyboard.append(row)
@@ -718,20 +718,20 @@ def show_bank_selection_with_done(update: Update, context) -> None:
     
     # If this is from a callback query, use edit_message_text
     if hasattr(update, 'callback_query') and update.callback_query is not None:
-        update.callback_query.edit_message_text(
+        await update.callback_query.edit_message_text(
             text="🏦 <b>Please select a bank for your deposit:</b>\n\nChoose from the list below or enter a custom bank name.",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
     else:
         # Otherwise, send a new message
-        message.reply_text(
+        await message.reply_text(
             "🏦 <b>Please select a bank for your deposit:</b>\n\nChoose from the list below or enter a custom bank name.",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
 
-def ask_for_deposit_info(update: Update, context) -> None:
+async def ask_for_deposit_info(update: Update, context) -> None:
     """Ask the user for deposit amount, bank name, and remaining balance.
     Supports multiple bank deposits for the same day and improved balance tracking."""
     user_id = update.effective_user.id
@@ -758,13 +758,13 @@ def ask_for_deposit_info(update: Update, context) -> None:
     
     # If this is from a callback query, use edit_message_text
     if hasattr(update, 'callback_query'):
-        update.callback_query.edit_message_text(text=message_text, parse_mode='HTML')
+        await update.callback_query.edit_message_text(text=message_text, parse_mode='HTML')
     else:
         # Otherwise, send a new message
-        update.message.reply_text(message_text, parse_mode='HTML')
+        await update.message.reply_text(message_text, parse_mode='HTML')
 
 
-def handle_conversation(update: Update, context) -> None:
+async def handle_conversation(update: Update, context) -> None:
     """Handle the conversation flow for collecting deposit information."""
     # Safely extract user_id and text from the update object
     if hasattr(update, 'effective_user') and update.effective_user is not None:
@@ -784,7 +784,7 @@ def handle_conversation(update: Update, context) -> None:
     
     if user_id not in user_states:
         # If no active conversation, process as a regular message
-        collect_message(update, context)
+        await collect_message(update, context)
         return
     
     state = user_states[user_id]['state']
@@ -799,12 +799,12 @@ def handle_conversation(update: Update, context) -> None:
         
         # Check if bank already exists in default list or user's custom list
         if bank_name in NEPAL_BANKS:
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"❗ '{bank_name}' already exists in the default bank list. Please enter a different name:"
             )
             return
         elif bank_name in user_custom_banks[user_id]:
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"❗ '{bank_name}' already exists in your custom bank list. Please enter a different name:"
             )
             return
@@ -816,7 +816,7 @@ def handle_conversation(update: Update, context) -> None:
         user_states[user_id]['current_bank'] = bank_name
         user_states[user_id]['state'] = 'waiting_for_deposit_amount'
         
-        update.message.reply_text(
+        await update.message.reply_text(
             f"✅ Custom bank '{bank_name}' has been added.\n\n"
             f"Please enter the deposit amount for {bank_name}:"
         )
@@ -828,7 +828,7 @@ def handle_conversation(update: Update, context) -> None:
         
         # Check if bank already exists in default list
         if bank_name in NEPAL_BANKS:
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"❗ '{bank_name}' already exists in the default bank list. Please enter a different name:"
             )
             return
@@ -837,7 +837,7 @@ def handle_conversation(update: Update, context) -> None:
         user_states[user_id]['current_bank'] = bank_name
         user_states[user_id]['state'] = 'waiting_for_deposit_amount'
         
-        update.message.reply_text(
+        await update.message.reply_text(
             f"✅ Bank name '{bank_name}' has been set.\n\n"
             f"Please enter the deposit amount for {bank_name}:"
         )
@@ -883,7 +883,7 @@ def handle_conversation(update: Update, context) -> None:
             # Show summary of current deposits with improved formatting
             deposits_summary = "\n".join([f"• <b>{d['bank']}</b>: {d['amount']:.2f}" for d in user_states[user_id]['bank_deposits']])
             
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"✅ <b>Added deposit of {deposit_amount:.2f} to {current_bank}</b>\n\n"
                 f"<b>Current deposits:</b>\n{deposits_summary}\n\n"
                 f"<b>Running total:</b> {user_states[user_id]['total_deposits']:.2f}\n"
@@ -893,7 +893,7 @@ def handle_conversation(update: Update, context) -> None:
                 parse_mode='HTML'
             )
         except ValueError:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❗ Invalid amount. Please enter a valid number for the deposit amount:"
             )
     
@@ -918,17 +918,17 @@ def handle_conversation(update: Update, context) -> None:
                 user_states[user_id]['total_deposits'] = remaining_balance
             
             # Show bank selection for deposit entry
-            show_bank_selection_with_done(update, context)
+            await show_bank_selection_with_done(update, context)
             
         except ValueError:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❗ Invalid number format. Please enter a valid number for the remaining balance:"
             )
     
     elif state == 'waiting_for_csv_path':
         if text == '1':
             user_states[user_id]['state'] = 'waiting_for_csv_path_input'
-            update.message.reply_text(
+            await update.message.reply_text(
                 "<b>Provide existing CSV file path</b>\n\n"
                 "📝 Please enter the full path to your CSV file (e.g., C:\\Users\\YourName\\Documents\\my_file.csv):",
                 parse_mode='HTML'
@@ -936,7 +936,7 @@ def handle_conversation(update: Update, context) -> None:
         elif text == '2' or text.lower() in ['no', 'default', 'new']:
             # Use default filename (no CSV path)
             user_states[user_id]['csv_path'] = None
-            update.message.reply_text(
+            await update.message.reply_text(
                 "<b>Creating new CSV file</b>\n\n"
                 "📊 Creating a new CSV file with your deposit information...",
                 parse_mode='HTML'
@@ -944,35 +944,35 @@ def handle_conversation(update: Update, context) -> None:
             # Make sure we're using the message object, not the update directly
             if hasattr(update, 'callback_query'):
                 # If this was triggered from a callback query
-                process_export_csv(update, context, use_manual_input=True)
+                await process_export_csv(update, context, use_manual_input=True)
             else:
                 # If this was triggered from a text message
                 try:
-                    process_export_csv(update, context, use_manual_input=True)
+                    await process_export_csv(update, context, use_manual_input=True)
                 except Exception as e:
                     logger.error(f"Error processing CSV export: {e}")
-                    update.message.reply_text(f"❗ Error creating CSV file: {str(e)}")
+                    await update.message.reply_text(f"❗ Error creating CSV file: {str(e)}")
                     # Clear the conversation state on error
                     if user_id in user_states:
                         del user_states[user_id]
         elif os.path.isfile(text) and text.lower().endswith('.csv'):
             # User provided a valid CSV path directly
             user_states[user_id]['csv_path'] = text
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"<b>Appending to existing CSV file</b>\n\n"
                 f"📊 Appending to your existing CSV file at:\n{text}",
                 parse_mode='HTML'
             )
             try:
-                process_export_csv(update, context, use_manual_input=True)
+                await process_export_csv(update, context, use_manual_input=True)
             except Exception as e:
                 logger.error(f"Error processing CSV export: {e}")
-                update.message.reply_text(f"❗ Error creating CSV file: {str(e)}")
+                await update.message.reply_text(f"❗ Error creating CSV file: {str(e)}")
                 # Clear the conversation state on error
                 if user_id in user_states:
                     del user_states[user_id]
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❗ Invalid choice. Please reply with '1', '2', or a valid CSV file path:\n"
                 "1. Yes - I'll provide the file path\n"
                 "2. No - Create a new file (default)"
@@ -981,14 +981,14 @@ def handle_conversation(update: Update, context) -> None:
     elif state == 'waiting_for_csv_path_input':
         if os.path.isfile(text) and text.lower().endswith('.csv'):
             user_states[user_id]['csv_path'] = text
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"<b>Appending to existing CSV file</b>\n\n"
                 f"📊 Appending to your existing CSV file at:\n{text}",
                 parse_mode='HTML'
             )
-            process_export_csv(update, context, use_manual_input=True)
+            await process_export_csv(update, context, use_manual_input=True)
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❗ Invalid file path or file doesn't exist. Please enter a valid CSV file path:"
             )
     
@@ -1015,7 +1015,7 @@ def handle_conversation(update: Update, context) -> None:
             total_deposit = user_bank_deposits.get(user_id, {}).get(selected_bank, 0)
             remaining_limit = limit_amount - total_deposit
             
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"✅ Limit of {limit_amount} set for {selected_bank}.\n\n"
                 f"📊 <b>Remaining Limit Calculation</b>:\n"
                 f"Bank Limit: {limit_amount}\n"
@@ -1025,13 +1025,14 @@ def handle_conversation(update: Update, context) -> None:
             )
             
             # Clear the conversation state
-            del user_states[user_id]
+            if user_id in user_states:
+                del user_states[user_id]
         except ValueError:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❗ Invalid amount. Please enter a valid number for the limit amount:"
             )
 
-def export_csv(update: Update, context) -> None:
+async def export_csv(update: Update, context) -> None:
     """Start the process of exporting results as a CSV file with manual input option."""
     # Safely extract user_id and message from the update object
     if hasattr(update, 'effective_user') and update.effective_user is not None:
@@ -1045,7 +1046,7 @@ def export_csv(update: Update, context) -> None:
         return
 
     if user_id not in user_messages or not user_messages[user_id]:
-        message.reply_text("❗ No messages collected yet. Forward some messages first.")
+        await message.reply_text("❗ No messages collected yet. Forward some messages first.")
         return
     
     # Ask user if they want to use simple export or detailed export
@@ -1055,7 +1056,7 @@ def export_csv(update: Update, context) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    message.reply_text(
+    await message.reply_text(
         "📊 CSV Export Options:\n\n"
         "Choose your export format:\n"
         "• Simple: Just amounts, charges, and running sums\n"
@@ -1063,7 +1064,7 @@ def export_csv(update: Update, context) -> None:
         reply_markup=reply_markup
     )
 
-def export_simple_csv(update: Update, context) -> None:
+async def export_simple_csv(update: Update, context) -> None:
     """Export the results as a simple CSV file with amounts, charges, row sums, and running totals in a clearer format."""
     # Determine if this is called from a callback query or directly
     if hasattr(update, 'callback_query'):
@@ -1075,7 +1076,7 @@ def export_simple_csv(update: Update, context) -> None:
         message = update.message
 
     if user_id not in user_messages or not user_messages[user_id]:
-        message.reply_text("❗ No messages collected yet. Forward some messages first.")
+        await message.reply_text("❗ No messages collected yet. Forward some messages first.")
         return
 
     # Get user preferences
@@ -1111,7 +1112,7 @@ def export_simple_csv(update: Update, context) -> None:
                 charges.append(extracted_value)
 
     if not amounts and not charges:
-        message.reply_text(
+        await message.reply_text(
             f"❗ I couldn't find any numbers in your collected messages."
         )
         return
@@ -1177,7 +1178,7 @@ def export_simple_csv(update: Update, context) -> None:
 
         # Send the file to the user
         with open(filename, 'rb') as file:
-            message.reply_document(
+            await message.reply_document(
                 document=file,
                 filename=os.path.basename(filename),
                 caption=f"📊 Simple CSV export with improved format.\n\nThe file includes:\n- Amounts in the first column\n- Charges in the second column\n- Row Sum in the third column (adds amount and charge for each row)\n- Running total in the fourth column (cumulative sum of all row sums)\n- Final total at the bottom"
@@ -1188,11 +1189,11 @@ def export_simple_csv(update: Update, context) -> None:
 
     except Exception as e:
         logger.error(f"Error exporting simple CSV: {e}")
-        message.reply_text(
+        await message.reply_text(
             f"❗ Sorry, there was an error creating your CSV file: {str(e)}"
         )
 
-def process_export_csv(update: Update, context, use_manual_input=False) -> None:
+async def process_export_csv(update: Update, context, use_manual_input=False) -> None:
     """Export the results as a CSV file with the format: Date, Deposit Amount, Bank Name, Paid To Host, Total Deposit, Total Paid, Remaining Balance.
     Maintains a running balance by using the previous day's remaining balance as today's starting balance.
     Supports multiple bank deposits on the same day and provides detailed summaries."""
@@ -1215,7 +1216,7 @@ def process_export_csv(update: Update, context, use_manual_input=False) -> None:
             return
 
     if user_id not in user_messages or not user_messages[user_id]:
-        message.reply_text("❗ No messages collected yet. Forward some messages first.")
+        await message.reply_text("❗ No messages collected yet. Forward some messages first.")
         return
 
     # Get user preferences
@@ -1298,7 +1299,7 @@ def process_export_csv(update: Update, context, use_manual_input=False) -> None:
                 charges.append(extracted_value)
 
     if not amounts and not charges:
-        message.reply_text(
+        await message.reply_text(
             f"❗ I couldn't find any numbers in your collected messages."
         )
         return
@@ -1474,7 +1475,7 @@ def process_export_csv(update: Update, context, use_manual_input=False) -> None:
 
         # Send the file to the user
         with open(filename, 'rb') as file:
-            message.reply_document(
+            await message.reply_document(
                 document=file,
                 filename=os.path.basename(filename),
                 caption=f"📊 CSV export with deposit, paid to host (amount+charge), and balance."
@@ -1490,7 +1491,7 @@ def process_export_csv(update: Update, context, use_manual_input=False) -> None:
 
     except Exception as e:
         logger.error(f"Error exporting CSV: {e}")
-        message.reply_text(
+        await message.reply_text(
             f"❗ Sorry, there was an error creating your CSV file: {str(e)}"
         )
         
@@ -1498,12 +1499,12 @@ def process_export_csv(update: Update, context, use_manual_input=False) -> None:
         if user_id in user_states:
             del user_states[user_id]
 
-def export_json(update: Update, context) -> None:
+async def export_json(update: Update, context) -> None:
     """Export the results as a JSON file with 3 columns: amounts, charges, and sum."""
     user_id = update.effective_user.id
 
     if user_id not in user_messages or not user_messages[user_id]:
-        update.message.reply_text("❗ No messages collected yet. Forward some messages first.")
+        await update.message.reply_text("❗ No messages collected yet. Forward some messages first.")
         return
 
     # Get user preferences
@@ -1539,7 +1540,7 @@ def export_json(update: Update, context) -> None:
                 charges.append(extracted_value)
 
     if not amounts and not charges:
-        update.message.reply_text(
+        await update.message.reply_text(
             f"❗ I couldn't find any numbers in your collected messages."
         )
         return
@@ -1576,7 +1577,7 @@ def export_json(update: Update, context) -> None:
 
         # Send the file to the user
         with open(filename, 'rb') as file:
-            update.message.reply_document(
+            await update.message.reply_document(
                 document=file,
                 filename=filename,
                 caption=f"📊 JSON export with {len(amounts)} amounts, {len(charges)} charges, and their sum."
@@ -1587,22 +1588,22 @@ def export_json(update: Update, context) -> None:
 
     except Exception as e:
         logger.error(f"Error exporting JSON: {e}")
-        update.message.reply_text(
+        await update.message.reply_text(
             "❗ Sorry, there was an error creating your JSON file. Please try again later."
         )
 
-def clear_command(update: Update, context) -> None:
+async def clear_command(update: Update, context) -> None:
     """Clear all collected messages for the user."""
     user_id = update.effective_user.id
     
     # Reset the message collection for this user
     user_messages[user_id] = []
     
-    update.message.reply_text(
+    await update.message.reply_text(
         "✅ Your collection has been cleared. You can start forwarding new messages now."
     )
 
-def settings_command(update: Update, context) -> None:
+async def settings_command(update: Update, context) -> None:
     """Show and allow changing user preferences."""
     user_id = update.effective_user.id
 
@@ -1656,13 +1657,13 @@ def settings_command(update: Update, context) -> None:
         f"Click below to change settings or use banking features:"
     )
 
-    update.message.reply_text(
+    await update.message.reply_text(
         current_settings,
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
 
-def button_callback(update: Update, context) -> None:
+async def button_callback(update: Update, context) -> None:
     """Handle button presses from inline keyboards."""
     query = update.callback_query
     user_id = query.from_user.id
@@ -1670,7 +1671,7 @@ def button_callback(update: Update, context) -> None:
     
     # Handle header buttons that should not trigger any action
     if data == "header_no_action" or data == "custom_bank_header":
-        query.answer("This is just a header, please select an option below.")
+        await query.answer("This is just a header, please select an option below.")
         return
 
     # Initialize user preferences if not already set
@@ -1688,8 +1689,8 @@ def button_callback(update: Update, context) -> None:
         user_preferences[user_id]['silent_collection'] = not user_preferences[user_id]['silent_collection']
     elif data == 'csv_simple_export':
         # User wants a simple CSV with just amounts, charges and running sums
-        query.edit_message_text(text="Processing simple CSV export...")
-        export_simple_csv(update, context)
+        await query.edit_message_text(text="Processing simple CSV export...")
+        await export_simple_csv(update, context)
         return
     elif data == 'csv_detailed_export':
         # User wants the detailed CSV export - Step 1: Ask for remaining balance
@@ -1713,36 +1714,36 @@ def button_callback(update: Update, context) -> None:
             "Enter 0 if you don't want to include a remaining balance."
         )
         
-        query.edit_message_text(text=message_text, parse_mode='HTML')
+        await query.edit_message_text(text=message_text, parse_mode='HTML')
         return
     elif data == 'csv_manual_input':
         # Step 3: Show bank selection for deposit entry
-        query.edit_message_text(
+        await query.edit_message_text(
             "<b>Step 3: Please select a bank for your deposit:</b>\n\n"
             "Choose a bank from the list below. After selecting a bank, you'll be asked to enter the deposit amount.\n\n"
             "You can select multiple banks one by one. When you're done adding all banks, click 'Finish and Export CSV'.",
             parse_mode='HTML'
         )
         # Show bank selection with a Done button
-        show_bank_selection_with_done(update, context)
+        await show_bank_selection_with_done(update, context)
         return
     elif data == 'csv_auto_export':
         # User wants to use only extracted data
-        query.edit_message_text(text="Processing CSV export with extracted data...")
-        process_export_csv(update, context, use_manual_input=False)
+        await query.edit_message_text(text="Processing CSV export with extracted data...")
+        await process_export_csv(update, context, use_manual_input=False)
         return
     elif data == 'add_another_bank':
         # Step 5: User wants to add another bank deposit
-        query.edit_message_text(
+        await query.edit_message_text(
             "<b>Step 5: Add another bank deposit</b>\n\n"
             "You can select another bank to add more deposits, or click 'Finish and Export CSV' when you've finished adding all your bank deposits.",
             parse_mode='HTML'
         )
-        show_bank_selection_with_done(update, context)
+        await show_bank_selection_with_done(update, context)
         return
     elif data == 'finish_csv_export':
         # Step 6: User wants to finish and export CSV - Ask about file creation/append
-        query.edit_message_text(
+        await query.edit_message_text(
             "<b>Step 6: Choose file option</b>\n\n"
             "📝 Do you want to append to an existing CSV file or create a new one?\n\n"
             "1. Yes - I'll provide the file path to append to\n"
@@ -1757,18 +1758,18 @@ def button_callback(update: Update, context) -> None:
         return
     elif data == 'bank_deposit_entry':
         # User wants to manually enter bank deposit information
-        query.edit_message_text(text="Starting bank deposit entry process...")
-        start_bank_deposit_entry(update, context)
+        await query.edit_message_text(text="Starting bank deposit entry process...")
+        await start_bank_deposit_entry(update, context)
         return
     elif data == 'check_remaining_limit':
         # User wants to check remaining limit for a bank
-        query.edit_message_text(text="Starting remaining limit check process...")
-        start_remaining_limit_check(update, context)
+        await query.edit_message_text(text="Starting remaining limit check process...")
+        await start_remaining_limit_check(update, context)
         return
     elif data == 'add_custom_bank':
         # User wants to add a custom bank
-        query.edit_message_text(text="Starting custom bank addition process...")
-        start_add_custom_bank(update, context)
+        await query.edit_message_text(text="Starting custom bank addition process...")
+        await start_add_custom_bank(update, context)
         return
     elif data == 'done_bank_selection':
         # User is done with bank selection
@@ -1779,7 +1780,7 @@ def button_callback(update: Update, context) -> None:
                 deposits_summary = "\n".join([f"• <b>{d['bank']}</b>: {d['amount']:.2f}" for d in user_states[user_id]['bank_deposits']])
                 total_deposits = user_states[user_id]['total_deposits']
                 
-                query.edit_message_text(
+                await query.edit_message_text(
                     f"✅ <b>Bank deposit entry completed</b>\n\n"
                     f"<b>Deposits recorded:</b>\n{deposits_summary}\n\n"
                     f"<b>Total deposits:</b> {total_deposits:.2f}\n\n"
@@ -1788,15 +1789,16 @@ def button_callback(update: Update, context) -> None:
                 )
             else:
                 # No deposits were made
-                query.edit_message_text(
+                await query.edit_message_text(
                     "❗ No deposits were recorded.\n\n"
                     "You can start again using the /menu command."
                 )
             
             # Clear the user state
-            del user_states[user_id]
+            if user_id in user_states:
+                del user_states[user_id]
         else:
-            query.edit_message_text(
+            await query.edit_message_text(
                 "Operation cancelled. Use /menu to access other features."
             )
         return
@@ -1816,21 +1818,21 @@ def button_callback(update: Update, context) -> None:
                 selected_bank = user_custom_banks[user_id][bank_index]
                 user_states[user_id]['selected_bank'] = selected_bank
             else:
-                query.answer("Error: Custom bank not found")
+                await query.answer("Error: Custom bank not found")
                 return
         
         # Process based on the action
         if user_states[user_id].get('action') == 'deposit_entry':
-            query.edit_message_text(text=f"Selected bank: {selected_bank}\n\nPlease enter the deposit amount:")
+            await query.edit_message_text(text=f"Selected bank: {selected_bank}\n\nPlease enter the deposit amount:")
             user_states[user_id]['current_bank'] = selected_bank
             user_states[user_id]['state'] = 'waiting_for_deposit_amount'
         elif user_states[user_id].get('action') == 'limit_check':
-            query.edit_message_text(text=f"Selected bank: {selected_bank}\n\nPlease enter the limit amount for this bank:")
+            await query.edit_message_text(text=f"Selected bank: {selected_bank}\n\nPlease enter the limit amount for this bank:")
             user_states[user_id]['state'] = 'waiting_for_limit_amount'
         elif user_states[user_id].get('action') == 'csv_export':
             # Step 4: For CSV export, store the bank name and ask for deposit amount
             user_states[user_id]['current_bank'] = selected_bank
-            query.edit_message_text(
+            await query.edit_message_text(
                 f"<b>Step 4: Enter deposit amount for {selected_bank}</b>\n\n"
                 f"Please enter the deposit amount for this bank:",
                 parse_mode='HTML'
@@ -1840,7 +1842,7 @@ def button_callback(update: Update, context) -> None:
         
     elif data == 'enter_different_bank':
         # User wants to enter a custom bank name for this transaction
-        query.edit_message_text(text="Please enter the bank name in your next message:")
+        await query.edit_message_text(text="Please enter the bank name in your next message:")
         user_states[user_id]['state'] = 'waiting_for_bank_name'
         return
 
@@ -1885,7 +1887,7 @@ def button_callback(update: Update, context) -> None:
 
     try:
         # Edit the message with updated settings
-        query.edit_message_text(
+        await query.edit_message_text(
             text=current_settings,
             reply_markup=reply_markup,
             parse_mode='HTML'
@@ -1895,14 +1897,14 @@ def button_callback(update: Update, context) -> None:
         logger.error(f"Error updating settings message: {e}")
 
     # Answer the callback query to remove the loading state
-    query.answer(f"Setting updated: {data}")
+    await query.answer(f"Setting updated: {data}")
 
-def stats_command(update: Update, context) -> None:
+async def stats_command(update: Update, context) -> None:
     """Show statistics about collected messages."""
     user_id = update.effective_user.id
 
     if user_id not in user_messages or not user_messages[user_id]:
-        update.message.reply_text("❗ No messages collected yet. Forward some messages first.")
+        await update.message.reply_text("❗ No messages collected yet. Forward some messages first.")
         return
 
     # Get user preferences
@@ -1957,9 +1959,9 @@ def stats_command(update: Update, context) -> None:
         f"Use /process to see the actual values."
     )
 
-    update.message.reply_text(stats_message, parse_mode='HTML')
+    await update.message.reply_text(stats_message, parse_mode='HTML')
 
-def show_bank_selection_with_done(update: Update, context) -> None:
+async def show_bank_selection_with_done(update: Update, context) -> None:
     """Show a keyboard with bank selection options and a Done button."""
     # Determine if this is called from a callback query or directly
     if hasattr(update, 'callback_query') and update.callback_query is not None:
@@ -2039,7 +2041,7 @@ def show_bank_selection_with_done(update: Update, context) -> None:
     
     # If this is from a callback query, use edit_message_text
     if hasattr(update, 'callback_query') and update.callback_query is not None:
-        update.callback_query.edit_message_text(
+        await update.callback_query.edit_message_text(
             f"<b>Step 3: Select a bank for your deposit</b>\n\n"
             f"Choose a bank from the list below. After selecting a bank, you'll be asked to enter the deposit amount.{deposits_text}\n\n"
             f"When you've finished adding all your bank deposits, click 'Finish and Export CSV'.",
@@ -2048,7 +2050,7 @@ def show_bank_selection_with_done(update: Update, context) -> None:
         )
     else:
         # Otherwise, send a new message
-        message.reply_text(
+        await message.reply_text(
             f"<b>Step 3: Select a bank for your deposit</b>\n\n"
             f"Choose a bank from the list below. After selecting a bank, you'll be asked to enter the deposit amount.{deposits_text}\n\n"
             f"When you've finished adding all your bank deposits, click 'Finish and Export CSV'.",
@@ -2056,7 +2058,7 @@ def show_bank_selection_with_done(update: Update, context) -> None:
             parse_mode='HTML'
         )
 
-def start_bank_deposit_entry(update: Update, context) -> None:
+async def start_bank_deposit_entry(update: Update, context) -> None:
     """Start the process of entering a bank deposit manually."""
     user_id = update.callback_query.from_user.id
     
@@ -2107,7 +2109,7 @@ def start_bank_deposit_entry(update: Update, context) -> None:
     
     # Ask for remaining balance first if not already set
     if 'remaining_balance' not in user_states[user_id]:
-        update.callback_query.edit_message_text(
+        await update.callback_query.edit_message_text(
             "💰 <b>Please enter your remaining balance first:</b>\n\n"
             "This will be used as your starting balance.\n\n"
             "Enter 0 if you don't want to include a remaining balance.",
@@ -2115,12 +2117,12 @@ def start_bank_deposit_entry(update: Update, context) -> None:
         )
         user_states[user_id]['state'] = 'waiting_for_remaining_balance'
     else:
-        update.callback_query.edit_message_text(
+        await update.callback_query.edit_message_text(
             "🏦 Please select a bank or click Done when finished:",
             reply_markup=reply_markup
         )
 
-def start_remaining_limit_check(update: Update, context) -> None:
+async def start_remaining_limit_check(update: Update, context) -> None:
     """Start the process of checking remaining limit for a bank."""
     user_id = update.callback_query.from_user.id
     
@@ -2164,12 +2166,12 @@ def start_remaining_limit_check(update: Update, context) -> None:
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    update.callback_query.edit_message_text(
+    await update.callback_query.edit_message_text(
         "🏦 Please select a bank to check remaining limit:",
         reply_markup=reply_markup
     )
 
-def start_add_custom_bank(update: Update, context) -> None:
+async def start_add_custom_bank(update: Update, context) -> None:
     """Start the process of adding a custom bank."""
     user_id = update.callback_query.from_user.id
     
@@ -2179,7 +2181,7 @@ def start_add_custom_bank(update: Update, context) -> None:
         'action': 'add_custom_bank'
     }
     
-    update.callback_query.edit_message_text(
+    await update.callback_query.edit_message_text(
         "🏦 Please enter the name of the custom bank you want to add:"
     )
 
@@ -2222,33 +2224,22 @@ def check_bot_already_running(bot_token):
 
 
 def initialize_bot_safely():
-    """Initialize the bot with comprehensive conflict prevention."""
+    """Initialize the bot with comprehensive conflict prevention for v20+."""
     try:
         logging.info("Initializing bot with conflict prevention...")
-        
-        # Create the Updater and pass it your bot's token
-        updater = Updater(BOT_TOKEN, use_context=True)
-        
-        # Get the dispatcher to register handlers
-        dp = updater.dispatcher
-        
-        # Add handlers
-        dp.add_handler(CommandHandler("start", start))
-        dp.add_handler(CommandHandler("help", help_command))
-        dp.add_handler(CommandHandler("process", process_command))
-        dp.add_handler(CommandHandler("clear", clear_command))
-        dp.add_handler(CommandHandler("settings", settings_command))
-        dp.add_handler(CommandHandler("export_csv", export_csv))
-        dp.add_handler(CommandHandler("export_json", export_json))
-        dp.add_handler(CommandHandler("stats", stats_command))
-        dp.add_handler(CallbackQueryHandler(button_callback))
-        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, collect_message))
-        
-        # Log all errors
-        dp.add_error_handler(error_handler)
-        
-        return updater
-        
+        application = Application.builder().token(BOT_TOKEN).build()
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("process", process_command))
+        application.add_handler(CommandHandler("clear", clear_command))
+        application.add_handler(CommandHandler("settings", settings_command))
+        application.add_handler(CommandHandler("export_csv", export_csv))
+        application.add_handler(CommandHandler("export_json", export_json))
+        application.add_handler(CommandHandler("stats", stats_command))
+        application.add_handler(CallbackQueryHandler(button_callback))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_message))
+        application.add_error_handler(error_handler)
+        return application
     except Exception as e:
         logging.error(f"Error initializing bot: {e}")
         import traceback
@@ -2256,75 +2247,35 @@ def initialize_bot_safely():
         return None
 
 
-def main():
-    """Start the bot."""
-    global bot_updater
-    
-    # Special handling for Render.com environment
+async def main_async():
+    """Async entry point for the bot."""
     is_render = os.environ.get('RENDER', '') == 'true'
     if is_render:
         logging.info("Detected Render.com environment - using specialized setup")
         port = os.environ.get('PORT', '10000')
         os.environ['PORT'] = port
         logging.info(f"Using PORT: {port}")
-        
-        # Add additional information to logs
         render_instance = os.environ.get('RENDER_INSTANCE_ID', 'unknown')
         render_service = os.environ.get('RENDER_SERVICE_NAME', 'unknown')
         logging.info(f"Running as Render service: {render_service}, instance: {render_instance}")
-    
-    # Initialize the bot
-    updater = initialize_bot_safely()
-    if not updater:
+    application = initialize_bot_safely()
+    if not application:
         logging.error("Failed to initialize bot. Exiting.")
         return
-    
-    # Start keep-alive server - MUST be done before bot polling on Render
     if is_render:
         keep_alive_success = keep_alive()
         if not keep_alive_success:
             logging.critical("Failed to start keep-alive server on Render. Service might fail!")
-    
-    # Start the bot
     try:
         logging.info("Starting bot...")
-        updater.start_polling()
+        await application.run_polling()
         logging.info("Bot started successfully")
-        
-        # Run the bot until you press Ctrl-C or the process receives SIGINT,
-        # SIGTERM or SIGABRT. This should be used most of the time, since
-        # start_polling() is non-blocking and will stop the bot gracefully.
-        updater.idle()
-        
     except Exception as e:
         logging.error(f"Error running bot: {e}")
         import traceback
         logging.error(traceback.format_exc())
     finally:
-        # Cleanup on exit
-        if updater and updater.running:
-            updater.stop()
-            logging.info("Bot stopped")
-    
-    logging.info("Bot shutdown complete")
-
-
-def main():
-    """Synchronous entry point for the bot."""
-    # Register signal handlers for graceful shutdown
-    import signal
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    try:
-        # Start the bot
-        logging.info("Starting bot...")
-        asyncio.run(main_async())
-    except Exception as e:
-        logging.critical(f"Critical error: {e}")
-        logging.error(traceback.format_exc())
-    finally:
-        logging.info("Bot process ended")
+        logging.info("Bot shutdown complete")
 
 
 # Global variables to track bot state
