@@ -2223,77 +2223,43 @@ def check_bot_already_running(bot_token):
 
 async def initialize_bot_safely():
     """Initialize the bot with comprehensive conflict prevention."""
-    global bot_updater
-    
-    # Check if another instance is already running
-    if check_bot_already_running(BOT_TOKEN):
-        logging.error("Another bot instance is already running based on API check. Exiting.")
-        return None
-    
     try:
         logging.info("Initializing bot with conflict prevention...")
         
-        # Aggressive cleanup of Telegram webhook and pending updates
-        cleanup_bot = Bot(BOT_TOKEN)
-        
-        # First delete webhook and drop all pending updates
-        await cleanup_bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Deleted webhook and dropped pending updates")
-        await asyncio.sleep(2)
-        
-        # Then force a getUpdates call with short timeout to reset the API state
-        try:
-            await cleanup_bot.get_updates(offset=-1, limit=1, timeout=1)
-            logging.info("Reset API state with get_updates call")
-        except Exception as update_error:
-            logging.info(f"Expected error during get_updates reset: {update_error}")
-        
-        await asyncio.sleep(2)
-        
-        # Final webhook deletion to be sure
-        await cleanup_bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Final webhook cleanup complete")
-        
-        # Wait to ensure cleanup is complete
-        await asyncio.sleep(3)
-        
-        # Create updater with proper error handling (PTB v20+ syntax)
+        # Create application with proper error handling (PTB v20+ syntax)
         application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Configure bot with timeouts
         application.bot = Bot(
             BOT_TOKEN,
             read_timeout=30,
             connect_timeout=30
         )
+        
+        # Clean up any existing webhook
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Webhook cleaned up")
+        
         return application
         
-        return updater
     except Exception as e:
         logging.error(f"Error initializing bot: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         return None
 
 
-def main():
-    """Start the bot with comprehensive conflict prevention and recovery."""
+async def main_async():
+    """Async entry point for the bot."""
     global bot_updater
     
     # Special handling for Render.com environment
-    import os  # Make sure os is imported in this scope
     is_render = os.environ.get('RENDER', '') == 'true'
     if is_render:
         logging.info("Detected Render.com environment - using specialized setup")
-        # Ensure we're using the correct port
-        port = os.environ.get('PORT')
-        logging.info(f"Render assigned PORT: {port}")
-        
-        # Make sure the PORT is set in environment variables
-        if port:
-            # Port must be available in this process and in child threads
-            os.environ['PORT'] = port
-            logging.info(f"Set PORT environment variable to {port}")
-        else:
-            # If no port is assigned, set a default for Render that works with web services
-            os.environ['PORT'] = '10000'  # Render expects a port to be open
-            logging.warning("No PORT specified in Render environment, using default: 10000")
+        port = os.environ.get('PORT', '10000')
+        os.environ['PORT'] = port
+        logging.info(f"Using PORT: {port}")
         
         # Add additional information to logs
         render_instance = os.environ.get('RENDER_INSTANCE_ID', 'unknown')
@@ -2307,87 +2273,95 @@ def main():
     while restart_attempts < max_restarts:
         try:
             # Initialize the bot with conflict prevention
-            updater = asyncio.run(initialize_bot_safely())
-            if not updater:
+            application = await initialize_bot_safely()
+            if not application:
                 logging.error("Failed to initialize bot safely. Waiting to retry...")
-                time.sleep(30)  # Wait before retry
+                await asyncio.sleep(30)  # Wait before retry
                 restart_attempts += 1
                 continue
             
-            bot_updater = updater
+            bot_updater = application
             
             # Register handlers
-            dp = updater.dispatcher
-            dp.add_handler(CommandHandler("start", start))
-            dp.add_handler(CommandHandler("help", help_command))
-            dp.add_handler(CommandHandler("process", process_command))
-            dp.add_handler(CommandHandler("clear", clear_command))
-            dp.add_handler(CommandHandler("settings", settings_command))
-            dp.add_handler(CommandHandler("export_csv", export_csv))
-            dp.add_handler(CommandHandler("export_json", export_json))
-            dp.add_handler(CommandHandler("stats", stats_command))
-            dp.add_handler(CallbackQueryHandler(button_callback))
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_conversation))
-            dp.add_error_handler(error_handler)
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("help", help_command))
+            application.add_handler(CommandHandler("process", process_command))
+            application.add_handler(CommandHandler("clear", clear_command))
+            application.add_handler(CommandHandler("settings", settings_command))
+            application.add_handler(CommandHandler("export_csv", export_csv))
+            application.add_handler(CommandHandler("export_json", export_json))
+            application.add_handler(CommandHandler("stats", stats_command))
+            application.add_handler(CallbackQueryHandler(button_callback))
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_message))
+            
+            # Add error handler
+            application.add_error_handler(error_handler)
 
             # Start keep-alive server - MUST be done before bot polling on Render
             keep_alive_success = keep_alive()
             if is_render and not keep_alive_success:
                 logging.critical("Failed to start keep-alive server on Render. Service might fail!")
             
-            # Start the bot with conflict handling and automatic recovery
-            try:
-                logging.info("Starting bot polling...")
-                updater.start_polling(
-                    timeout=30,
-                    drop_pending_updates=True,
-                    allowed_updates=['message', 'callback_query', 'chat_member']
-                )
-                logging.info("Bot started successfully")
+            # Start the bot
+            logging.info("Starting bot polling...")
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=['message', 'callback_query', 'chat_member']
+            )
+            logging.info("Bot started successfully")
+            
+            # Keep the application running
+            while True:
+                await asyncio.sleep(3600)  # Sleep for long periods to reduce CPU usage
                 
-                # Use a different approach to monitor the updater's state
-                # Instead of checking an attribute that doesn't exist, we'll 
-                # use the idle() method which will block until we receive a stop signal
-                updater.idle()
-                
-                # If idle() returns, it means the bot was stopped externally
-                logging.warning("Updater stopped running. Attempting to restart...")
-                    
-            except Conflict as e:
-                logging.critical(f"Conflict detected during polling: {e}")
-                # Force exit on conflict
-                import os
-                os._exit(1)
-            except (NetworkError, ConnectionError, requests.RequestException) as e:
-                logging.error(f"Network error: {e}. Restarting...")
-                time.sleep(30)  # Wait before restart
-                restart_attempts += 1
-                continue
-            except Exception as e:
-                logging.error(f"Error during bot polling: {e}")
-                time.sleep(30)  # Wait before restart
-                restart_attempts += 1
-                continue
-                
-        except Exception as e:
-            logging.error(f"Error in main function: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            time.sleep(30)  # Wait before restart
+        except Conflict as e:
+            logging.critical(f"Conflict detected: {e}")
+            break  # Exit on conflict
+            
+        except (NetworkError, ConnectionError, requests.RequestException) as e:
+            logging.error(f"Network error: {e}. Restarting...")
             restart_attempts += 1
+            await asyncio.sleep(30)
+            
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+            logging.error(traceback.format_exc())
+            restart_attempts += 1
+            await asyncio.sleep(30)
+            
         finally:
-            if updater:
-                try:
-                    updater.stop()
-                    logging.info("Updater stopped")
-                except:
-                    pass
+            try:
+                if application and application.running:
+                    await application.stop()
+                    await application.shutdown()
+                    logging.info("Bot stopped gracefully")
+            except Exception as e:
+                logging.error(f"Error during shutdown: {e}")
     
-    # If we've reached max restarts, log a critical error
     if restart_attempts >= max_restarts:
-        logging.critical(f"Reached maximum restart attempts ({max_restarts}). Please check the bot configuration.")
+        logging.critical(f"Reached maximum restart attempts ({max_restarts}). Exiting.")
     
     logging.info("Bot shutdown complete")
+
+
+def main():
+    """Synchronous entry point for the bot."""
+    # Register signal handlers for graceful shutdown
+    import signal
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Start the bot
+        logging.info("Starting bot...")
+        asyncio.run(main_async())
+    except Exception as e:
+        logging.critical(f"Critical error: {e}")
+        logging.error(traceback.format_exc())
+    finally:
+        logging.info("Bot process ended")
 
 
 # Global variables to track bot state
