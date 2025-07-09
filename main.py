@@ -18,7 +18,7 @@ import sys
 sys.modules['imghdr'] = imghdr_compat
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from telegram.error import Conflict, TelegramError, NetworkError
 import requests
 
@@ -2258,14 +2258,13 @@ async def initialize_bot_safely():
         await asyncio.sleep(3)
         
         # Create updater with proper error handling (PTB v20+ syntax)
-        updater = Updater(
-            token=BOT_TOKEN,
-            request_kwargs={
-                'read_timeout': 30,
-                'connect_timeout': 30
-            },
-            use_context=True
+        application = Application.builder().token(BOT_TOKEN).build()
+        application.bot = Bot(
+            BOT_TOKEN,
+            read_timeout=30,
+            connect_timeout=30
         )
+        return application
         
         return updater
     except Exception as e:
