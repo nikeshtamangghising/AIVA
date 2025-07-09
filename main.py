@@ -2226,19 +2226,23 @@ async def initialize_bot_safely():
     try:
         logging.info("Initializing bot with conflict prevention...")
         
-        # Create application with proper error handling (PTB v20+ syntax)
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Configure bot with timeouts
-        application.bot = Bot(
-            BOT_TOKEN,
+        # First, create the bot instance with timeouts
+        bot = Bot(
+            token=BOT_TOKEN,
             read_timeout=30,
             connect_timeout=30
         )
         
         # Clean up any existing webhook
-        await application.bot.delete_webhook(drop_pending_updates=True)
+        await bot.delete_webhook(drop_pending_updates=True)
         logging.info("Webhook cleaned up")
+        
+        # Create application with the configured bot
+        application = (
+            Application.builder()
+            .bot(bot)
+            .build()
+        )
         
         return application
         
