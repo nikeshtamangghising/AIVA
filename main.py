@@ -2260,7 +2260,6 @@ async def initialize_bot_safely():
         # Create updater with proper error handling (PTB v20+ syntax)
         updater = Updater(
             token=BOT_TOKEN,
-            BOT_TOKEN, 
             request_kwargs={
                 'read_timeout': 30,
                 'connect_timeout': 30
