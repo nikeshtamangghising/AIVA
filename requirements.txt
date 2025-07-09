@@ -6,6 +6,3 @@ psutil==5.9.5
 requests==2.31.0
 gunicorn==21.2.0
 filetype==1.2.0
-imghdr==1.7.0imghdr-backport==1.1.0
-
-
