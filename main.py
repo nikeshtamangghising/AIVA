@@ -17,7 +17,7 @@ import sys
 sys.modules['imghdr'] = imghdr_compat
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from telegram.error import Conflict, TelegramError, NetworkError
 import requests
 
