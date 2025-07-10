@@ -2319,17 +2319,28 @@ async def main_async():
             last_request_time = time.time()
             return f'OK - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 200
             
-        # Webhook endpoint
+        # Webhook endpoint with proper async handling
         @flask_app.route(f'/webhook_{BOT_TOKEN.split(":")[0]}', methods=['POST'])
         async def webhook():
-            if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != os.environ.get('WEBHOOK_SECRET', 'your-secret-token'):
-                return jsonify({'status': 'unauthorized'}), 403
+            try:
+                # Verify secret token
+                if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != os.environ.get('WEBHOOK_SECRET', 'your-secret-token'):
+                    logging.warning("Unauthorized webhook access attempt")
+                    return jsonify({'status': 'unauthorized'}), 403
                 
-            if request.is_json:
-                data = request.get_json()
-                update = telegram.Update.de_json(data, application.bot)
-                await application.process_update(update)
-            return jsonify({'status': 'ok'}), 200
+                # Process update
+                if request.is_json:
+                    data = request.get_json()
+                    update = telegram.Update.de_json(data, application.bot)
+                    # Run in executor to avoid blocking
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, lambda: asyncio.run(application.process_update(update)))
+                
+                return jsonify({'status': 'ok'}), 200
+                
+            except Exception as e:
+                logging.error(f"Error in webhook: {e}", exc_info=True)
+                return jsonify({'status': 'error', 'message': str(e)}), 500
         
         # Self-ping function to keep the service alive
         def self_ping():
