@@ -2321,21 +2321,35 @@ async def main_async():
             
         # Webhook endpoint with proper async handling
         @flask_app.route(f'/webhook_{BOT_TOKEN.split(":")[0]}', methods=['POST'])
-        async def webhook():
+        def webhook():
             try:
                 # Verify secret token
                 if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != os.environ.get('WEBHOOK_SECRET', 'your-secret-token'):
                     logging.warning("Unauthorized webhook access attempt")
                     return jsonify({'status': 'unauthorized'}), 403
                 
-                # Process update
+                # Process update in a thread to avoid blocking
                 if request.is_json:
                     data = request.get_json()
-                    update = telegram.Update.de_json(data, application.bot)
-                    # Run in executor to avoid blocking
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, lambda: asyncio.run(application.process_update(update)))
+                    
+                    # Create a new event loop for this thread
+                    def process_update():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            update = telegram.Update.de_json(data, application.bot)
+                            loop.run_until_complete(application.process_update(update))
+                        except Exception as e:
+                            logging.error(f"Error processing update: {e}", exc_info=True)
+                        finally:
+                            loop.close()
+                    
+                    # Start processing in a separate thread
+                    import threading
+                    thread = threading.Thread(target=process_update)
+                    thread.start()
                 
+                # Return 200 immediately to acknowledge receipt
                 return jsonify({'status': 'ok'}), 200
                 
             except Exception as e:
