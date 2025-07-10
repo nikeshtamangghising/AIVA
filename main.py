@@ -134,6 +134,22 @@ def create_socket_lock():
     lock_port = 10001
     
     try:
+        # First, try to connect to the lock port to check if another instance is running
+        test_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        test_socket.settimeout(1)  # 1 second timeout
+        try:
+            # Try to send a byte to the lock port
+            test_socket.sendto(b'\x00', ('127.0.0.1', lock_port))
+            # If we can send, another instance is already running
+            test_socket.close()
+            logging.error("Another instance of the bot is already running")
+            return None
+        except socket.error:
+            # Expected - no one is listening yet
+            pass
+        finally:
+            test_socket.close()
+        
         # Create a new socket for locking
         lock_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
@@ -145,16 +161,19 @@ def create_socket_lock():
         # Set socket to non-blocking mode
         lock_socket.setblocking(False)
         
-        # Try to bind to the lock port with a timeout to handle race conditions
+        # Try to bind to the lock port
         try:
-            lock_socket.bind(('localhost', lock_port))
-            logging.info("Successfully acquired socket lock")
+            lock_socket.bind(('0.0.0.0', lock_port))
             
-            # Set up a heartbeat thread to keep the socket alive
+            # If we get here, we successfully bound to the port
+            logging.info("Acquired socket lock - no other instances running")
+            
+            # Start a thread to keep the socket alive
             def keep_socket_alive():
-                while not getattr(threading.current_thread(), "stop", False):
+                while True:
                     try:
-                        # Just keep the thread alive
+                        # Send a byte to keep the socket alive
+                        lock_socket.sendto(b'\x00', ('127.0.0.1', lock_port))
                         time.sleep(2)
                     except:
                         break
@@ -174,7 +193,7 @@ def create_socket_lock():
 
 def graceful_shutdown():
     """Perform a graceful shutdown of the bot and cleanup resources."""
-    global SHUTDOWN_IN_PROGRESS
+    global SHUTDOWN_IN_PROGRESS, application
     
     if SHUTDOWN_IN_PROGRESS:
         return
@@ -185,23 +204,53 @@ def graceful_shutdown():
     try:
         # Stop any running asyncio tasks
         import asyncio
-        loop = asyncio.get_event_loop()
         
-        # Cancel all running tasks
-        tasks = asyncio.all_tasks(loop=loop)
-        for task in tasks:
-            if not task.done() and not task.cancelled():
-                task.cancel()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         
-        # Run the loop until all tasks are cancelled
-        if tasks:
-            loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        async def shutdown_application():
+            """Shutdown the application properly."""
+            try:
+                if application and hasattr(application, 'running') and application.running:
+                    logging.info("Stopping application...")
+                    await application.stop()
+                if application and hasattr(application, 'updater') and application.updater.running:
+                    logging.info("Stopping updater...")
+                    await application.updater.stop()
+                if application and hasattr(application, 'shutdown'):
+                    logging.info("Shutting down application...")
+                    await application.shutdown()
+            except Exception as e:
+                logging.error(f"Error during application shutdown: {e}")
+        
+        # Run the shutdown coroutine
+        if 'loop' in locals() and loop.is_running():
+            loop.run_until_complete(shutdown_application())
             
-        # Close the loop
-        loop.close()
+            # Cancel all running tasks
+            tasks = [t for t in asyncio.all_tasks(loop=loop) if not t.done()]
+            if tasks:
+                logging.info(f"Cancelling {len(tasks)} running tasks...")
+                for task in tasks:
+                    task.cancel()
+                
+                # Wait for tasks to be cancelled
+                loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+            
+            # Stop the event loop
+            loop.stop()
+            
+            # Close the loop
+            if not loop.is_closed():
+                loop.close()
         
     except Exception as e:
         logging.error(f"Error during shutdown: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
     finally:
         SHUTDOWN_IN_PROGRESS = False
         logging.info("Shutdown complete")
@@ -2338,6 +2387,12 @@ def run_bot():
             loop.close()
 
 if __name__ == "__main__":
+    # Create a socket lock to ensure only one instance runs
+    lock_socket = create_socket_lock()
+    if not lock_socket:
+        logging.critical("Another instance of the bot is already running. Exiting...")
+        sys.exit(1)
+        
     try:
         import signal
         signal.signal(signal.SIGINT, signal_handler)
@@ -2349,14 +2404,21 @@ if __name__ == "__main__":
         bot_thread.start()
         
         # Keep the main thread alive
-        while True:
-            signal.pause()
+        try:
+            while True:
+                signal.pause()
+        except (KeyboardInterrupt, SystemExit):
+            logging.info("Shutdown signal received...")
             
-    except KeyboardInterrupt:
-        logging.info("Shutting down gracefully...")
     except Exception as e:
         logging.critical(f"Critical error during startup: {e}")
         import traceback
         logging.critical(traceback.format_exc())
     finally:
+        # Clean up the socket lock
+        if 'lock_socket' in locals() and lock_socket:
+            try:
+                lock_socket.close()
+            except:
+                pass
         graceful_shutdown()
