@@ -173,15 +173,38 @@ def create_socket_lock():
         return None
 
 def graceful_shutdown():
-    """Perform a graceful shutdown of the bot."""
+    """Perform a graceful shutdown of the bot and cleanup resources."""
     global SHUTDOWN_IN_PROGRESS
+    
     if SHUTDOWN_IN_PROGRESS:
         return
+        
     SHUTDOWN_IN_PROGRESS = True
     logging.info("Starting graceful shutdown...")
-    # With Application, shutdown is handled by the event loop and signal handler
-    SHUTDOWN_IN_PROGRESS = False
-    logging.info("Shutdown complete")
+    
+    try:
+        # Stop any running asyncio tasks
+        import asyncio
+        loop = asyncio.get_event_loop()
+        
+        # Cancel all running tasks
+        tasks = asyncio.all_tasks(loop=loop)
+        for task in tasks:
+            if not task.done() and not task.cancelled():
+                task.cancel()
+        
+        # Run the loop until all tasks are cancelled
+        if tasks:
+            loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+            
+        # Close the loop
+        loop.close()
+        
+    except Exception as e:
+        logging.error(f"Error during shutdown: {e}")
+    finally:
+        SHUTDOWN_IN_PROGRESS = False
+        logging.info("Shutdown complete")
 
 def error_handler(update, context):
     """Handle errors in the dispatcher with immediate termination for conflicts."""
@@ -2238,23 +2261,53 @@ async def main_async():
         render_instance = os.environ.get('RENDER_INSTANCE_ID', 'unknown')
         render_service = os.environ.get('RENDER_SERVICE_NAME', 'unknown')
         logging.info(f"Running as Render service: {render_service}, instance: {render_instance}")
+    
+    # Initialize the bot application
     application = initialize_bot_safely()
     if not application:
         logging.error("Failed to initialize bot. Exiting.")
         return
+    
+    # Start the Flask server in a separate thread if on Render
     if is_render:
-        keep_alive_success = keep_alive()
-        if not keep_alive_success:
-            logging.critical("Failed to start keep-alive server on Render. Service might fail!")
+        from keep_alive import keep_alive
+        import threading
+        
+        def start_flask():
+            try:
+                keep_alive()
+            except Exception as e:
+                logging.error(f"Error in Flask server: {e}")
+        
+        flask_thread = threading.Thread(target=start_flask, daemon=True)
+        flask_thread.start()
+        logging.info("Flask keep-alive server started in background thread")
+    
     try:
-        logging.info("Starting bot...")
-        await application.run_polling()
+        # Start the bot
+        logging.info("Starting Telegram bot...")
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
         logging.info("Bot started successfully")
+        
+        # Keep the coroutine alive
+        while True:
+            await asyncio.sleep(3600)  # Sleep for 1 hour
+            
+    except asyncio.CancelledError:
+        logging.info("Received cancellation, shutting down...")
     except Exception as e:
-        logging.error(f"Error running bot: {e}")
+        logging.error(f"Error in bot: {e}")
         import traceback
         logging.error(traceback.format_exc())
     finally:
+        logging.info("Shutting down bot...")
+        if application.running:
+            await application.stop()
+        if application.updater.running:
+            await application.updater.stop()
+        await application.shutdown()
         logging.info("Bot shutdown complete")
 
 
@@ -2269,15 +2322,41 @@ def signal_handler(sig, frame):
     import os
     os._exit(0)  # Force exit to avoid restart loops
 
+def run_bot():
+    """Run the Telegram bot in a separate thread."""
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main_async())
+    except Exception as e:
+        logging.critical(f"Critical error in bot thread: {e}")
+        import traceback
+        logging.critical(traceback.format_exc())
+    finally:
+        if 'loop' in locals():
+            loop.close()
+
 if __name__ == "__main__":
     try:
         import signal
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        logging.info("Starting bot...")
-        import asyncio
-        asyncio.run(main_async())
+        
+        # Start the bot in a separate thread
+        import threading
+        bot_thread = threading.Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+        
+        # Keep the main thread alive
+        while True:
+            signal.pause()
+            
+    except KeyboardInterrupt:
+        logging.info("Shutting down gracefully...")
     except Exception as e:
         logging.critical(f"Critical error during startup: {e}")
         import traceback
         logging.critical(traceback.format_exc())
+    finally:
+        graceful_shutdown()
