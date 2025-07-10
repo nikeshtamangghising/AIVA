@@ -3,6 +3,9 @@ import logging
 import asyncio
 import os
 import time
+import signal
+import sys
+from datetime import datetime
 import telegram  # Import the telegram module
 import csv
 import json
@@ -2306,10 +2309,15 @@ async def main_async():
         # Create a new Flask app
         flask_app = Flask(__name__)
         
-        # Health check endpoint
+        # Keep track of the last request time
+        last_request_time = time.time()
+        
+        # Health check endpoint with timestamp
         @flask_app.route('/')
         def health_check():
-            return 'OK', 200
+            global last_request_time
+            last_request_time = time.time()
+            return f'OK - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 200
             
         # Webhook endpoint
         @flask_app.route(f'/webhook_{BOT_TOKEN.split(":")[0]}', methods=['POST'])
@@ -2323,16 +2331,40 @@ async def main_async():
                 await application.process_update(update)
             return jsonify({'status': 'ok'}), 200
         
+        # Self-ping function to keep the service alive
+        def self_ping():
+            import requests
+            import random
+            while True:
+                try:
+                    # Random interval between 3-5 minutes to avoid being detected as a bot
+                    time.sleep(random.randint(180, 300))
+                    response = requests.get(f'https://{os.environ.get("RENDER_SERVICE_NAME")}.onrender.com/')
+                    logging.info(f"Self-ping status: {response.status_code}")
+                except Exception as e:
+                    logging.error(f"Self-ping failed: {e}")
+                    time.sleep(60)  # Wait a bit longer if there's an error
+        
         # Start the Flask server in a separate thread
         def run_flask():
             try:
                 logging.info(f"Starting Flask server on port {port}...")
-                serve(flask_app, host='0.0.0.0', port=port, threads=4)
+                # Use multiple threads to handle concurrent requests
+                serve(flask_app, host='0.0.0.0', port=port, threads=4, 
+                      connection_limit=100, cleanup_interval=30, 
+                      channel_timeout=120, asyncore_use_poll=True)
             except Exception as e:
                 logging.error(f"Error in Flask server: {e}")
         
+        # Start Flask server thread
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
+        
+        # Start self-ping thread only if not running locally
+        if is_render:
+            self_ping_thread = threading.Thread(target=self_ping, daemon=True)
+            self_ping_thread.start()
+            logging.info("Self-ping thread started")
         
         try:
             # Initialize the bot
@@ -2350,9 +2382,30 @@ async def main_async():
             )
             logging.info(f"Webhook set to: {webhook_url}{webhook_path}")
             
-            # Keep the application running
+            # Keep the application running with error handling
+            last_check = time.time()
             while True:
-                await asyncio.sleep(3600)  # Sleep for 1 hour
+                try:
+                    # Check if the server is still responding
+                    current_time = time.time()
+                    if current_time - last_request_time > 300:  # 5 minutes
+                        logging.warning("No recent requests detected. Restarting server...")
+                        # Trigger a restart by raising an exception
+                        raise Exception("No recent requests detected")
+                        
+                    # Check if the bot is still running
+                    await application.bot.get_me()
+                    last_check = current_time
+                    
+                    # Sleep with shorter intervals for better responsiveness
+                    for _ in range(12):  # 12 * 5s = 60s total sleep
+                        await asyncio.sleep(5)
+                        
+                except Exception as e:
+                    logging.error(f"Error in main loop: {e}")
+                    # If we can't recover, re-raise to trigger a restart
+                    if not await self_heal():
+                        raise
                 
         except Exception as e:
             logging.error(f"Error in webhook setup: {e}")
@@ -2424,12 +2477,38 @@ def run_bot():
         if 'loop' in locals():
             loop.close()
 
+async def self_heal():
+    """Attempt to recover from errors without restarting the entire application"""
+    try:
+        # Try to reinitialize the bot
+        if 'application' in globals():
+            if application.running:
+                await application.stop()
+            if hasattr(application, 'updater') and application.updater.running:
+                await application.updater.stop()
+            await application.shutdown()
+        return True
+    except Exception as e:
+        logging.error(f"Self-heal failed: {e}")
+        return False
+
 if __name__ == "__main__":
     # Create an instance lock to ensure only one instance runs
     lock_file = create_instance_lock()
     if not lock_file:
         logging.critical("Another instance of the bot is already running. Exiting...")
         sys.exit(1)
+        
+    # Set up signal handlers for graceful shutdown
+    def signal_handler(sig, frame):
+        logging.info("Shutdown signal received. Cleaning up...")
+        if 'application' in globals():
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(graceful_shutdown())
+        sys.exit(0)
+        
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
         
     try:
         import signal
