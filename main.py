@@ -2297,62 +2297,58 @@ async def main_async():
         logging.error("Failed to initialize bot application. Exiting.")
         return
     
-    # Start the Flask server in a separate thread if on Render
+    # Start the Flask server with webhook integration
     if is_render:
-        from keep_alive import keep_alive
+        from flask import Flask, request, jsonify
         import threading
+        from waitress import serve
         
-        def start_flask():
+        # Create a new Flask app
+        flask_app = Flask(__name__)
+        
+        # Health check endpoint
+        @flask_app.route('/')
+        def health_check():
+            return 'OK', 200
+            
+        # Webhook endpoint
+        @flask_app.route(f'/webhook_{BOT_TOKEN.split(":")[0]}', methods=['POST'])
+        async def webhook():
+            if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != os.environ.get('WEBHOOK_SECRET', 'your-secret-token'):
+                return jsonify({'status': 'unauthorized'}), 403
+                
+            if request.is_json:
+                data = request.get_json()
+                update = telegram.Update.de_json(data, application.bot)
+                await application.process_update(update)
+            return jsonify({'status': 'ok'}), 200
+        
+        # Start the Flask server in a separate thread
+        def run_flask():
             try:
-                keep_alive()
+                logging.info(f"Starting Flask server on port {port}...")
+                serve(flask_app, host='0.0.0.0', port=port, threads=4)
             except Exception as e:
                 logging.error(f"Error in Flask server: {e}")
         
-        flask_thread = threading.Thread(target=start_flask, daemon=True)
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
-        logging.info("Flask keep-alive server started in background thread")
-        
-        # Use webhook for Render
-        webhook_url = f"https://{os.environ.get('RENDER_SERVICE_NAME')}.onrender.com"
-        webhook_path = f"/webhook_{BOT_TOKEN.split(':')[0]}"  # Use bot token hash as webhook path
         
         try:
-            # Remove any existing webhook first
-            await application.bot.delete_webhook()
+            # Initialize the bot
+            await application.initialize()
+            await application.start()
             
             # Set webhook
+            webhook_url = f"https://{os.environ.get('RENDER_SERVICE_NAME')}.onrender.com"
+            webhook_path = f"/webhook_{BOT_TOKEN.split(':')[0]}"
+            
+            await application.bot.delete_webhook()
             await application.bot.set_webhook(
                 url=f"{webhook_url}{webhook_path}",
                 secret_token=os.environ.get('WEBHOOK_SECRET', 'your-secret-token')
             )
             logging.info(f"Webhook set to: {webhook_url}{webhook_path}")
-            
-            # Start webhook server
-            await application.initialize()
-            await application.start()
-            
-            # Start webhook with aiohttp
-            from aiohttp import web
-            
-            async def handle_webhook(request):
-                if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != os.environ.get('WEBHOOK_SECRET', 'your-secret-token'):
-                    return web.Response(status=403)
-                
-                if request.body_exists:
-                    data = await request.json()
-                    update = telegram.Update.de_json(data, application.bot)
-                    await application.process_update(update)
-                return web.Response()
-            
-            app = web.Application()
-            app.router.add_post(webhook_path, handle_webhook)
-            
-            runner = web.AppRunner(app)
-            await runner.setup()
-            site = web.TCPSite(runner, '0.0.0.0', port)
-            await site.start()
-            
-            logging.info(f"Webhook server started on port {port}")
             
             # Keep the application running
             while True:
