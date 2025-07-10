@@ -8,6 +8,7 @@ import json
 import socket
 import threading
 import random
+import fcntl
 from datetime import datetime
 import sys
 sys.path.insert(0, '')  # Ensure current directory is in path
@@ -129,66 +130,45 @@ user_custom_banks = {}
 # Flag to track if shutdown is in progress
 SHUTDOWN_IN_PROGRESS = False
 
-def create_socket_lock():
-    """Create a socket-based lock to ensure only one instance of the bot runs."""
-    lock_port = 10001
+def create_instance_lock():
+    """Create a file-based lock to ensure only one instance of the bot runs.
+    
+    Returns:
+        file object: The lock file if acquired, None if another instance is running
+    """
+    import fcntl
+    import os
+    import time
+    
+    lock_file_path = '/tmp/bot_instance.lock'  # Using /tmp which is ephemeral in containers
     
     try:
-        # First, try to connect to the lock port to check if another instance is running
-        test_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        test_socket.settimeout(1)  # 1 second timeout
+        # Try to create and lock the file
+        lock_file = open(lock_file_path, 'w')
+        
+        # Try to acquire an exclusive lock (non-blocking)
         try:
-            # Try to send a byte to the lock port
-            test_socket.sendto(b'\x00', ('127.0.0.1', lock_port))
-            # If we can send, another instance is already running
-            test_socket.close()
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            logging.info("Acquired instance lock - no other instances running")
+            
+            # Write the current process ID to the lock file
+            lock_file.write(f"{os.getpid()}")
+            lock_file.flush()
+            
+            return lock_file
+            
+        except (IOError, BlockingIOError):
+            # Couldn't acquire lock, another instance is running
+            lock_file.close()
             logging.error("Another instance of the bot is already running")
-            return None
-        except socket.error:
-            # Expected - no one is listening yet
-            pass
-        finally:
-            test_socket.close()
-        
-        # Create a new socket for locking
-        lock_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
-        # Set socket options for better exclusivity
-        lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
-            lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        
-        # Set socket to non-blocking mode
-        lock_socket.setblocking(False)
-        
-        # Try to bind to the lock port
-        try:
-            lock_socket.bind(('0.0.0.0', lock_port))
-            
-            # If we get here, we successfully bound to the port
-            logging.info("Acquired socket lock - no other instances running")
-            
-            # Start a thread to keep the socket alive
-            def keep_socket_alive():
-                while True:
-                    try:
-                        # Send a byte to keep the socket alive
-                        lock_socket.sendto(b'\x00', ('127.0.0.1', lock_port))
-                        time.sleep(2)
-                    except:
-                        break
-            
-            heartbeat_thread = threading.Thread(target=keep_socket_alive, daemon=True)
-            heartbeat_thread.start()
-            
-            return lock_socket
-        except socket.error as e:
-            logging.error(f"Socket already in use, another instance is likely running: {e}")
-            lock_socket.close()
             return None
             
     except Exception as e:
-        logging.error(f"Failed to create socket lock: {e}")
+        logging.error(f"Failed to create instance lock: {e}")
+        try:
+            lock_file.close()
+        except:
+            pass
         return None
 
 def graceful_shutdown():
@@ -2387,9 +2367,9 @@ def run_bot():
             loop.close()
 
 if __name__ == "__main__":
-    # Create a socket lock to ensure only one instance runs
-    lock_socket = create_socket_lock()
-    if not lock_socket:
+    # Create an instance lock to ensure only one instance runs
+    lock_file = create_instance_lock()
+    if not lock_file:
         logging.critical("Another instance of the bot is already running. Exiting...")
         sys.exit(1)
         
@@ -2415,10 +2395,18 @@ if __name__ == "__main__":
         import traceback
         logging.critical(traceback.format_exc())
     finally:
-        # Clean up the socket lock
-        if 'lock_socket' in locals() and lock_socket:
+        # Clean up the lock file
+        if 'lock_file' in locals() and lock_file:
             try:
-                lock_socket.close()
-            except:
-                pass
+                # Release the lock and close the file
+                import fcntl
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                lock_file.close()
+                try:
+                    import os
+                    os.unlink(lock_file.name)
+                except:
+                    pass
+            except Exception as e:
+                logging.error(f"Error releasing lock: {e}")
         graceful_shutdown()

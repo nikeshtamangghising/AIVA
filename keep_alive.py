@@ -222,12 +222,15 @@ def run():
 START_TIME = datetime.now()
 
 def self_ping():
-    """Ping the application every 5 minutes to prevent sleeping on Render.com with smart backoff"""
-    # Initial backoff parameters
-    base_wait = 300  # 5 minutes base interval
-    backoff_factor = 2  # Double the wait time on consecutive failures
-    max_wait = 900  # Maximum 15 minutes between pings
-    min_wait = 60   # Minimum 1 minute between pings
+    """Ping the application to prevent sleeping on Render.com with smart backoff and health checks.
+    
+    Uses a more aggressive ping strategy for Render's free tier to prevent idling.
+    """
+    # More aggressive ping settings for Render's free tier
+    base_wait = 240  # 4 minutes base interval (Render's idle timeout is ~15 minutes)
+    backoff_factor = 1.5  # Less aggressive backoff
+    max_wait = 600  # Maximum 10 minutes between pings
+    min_wait = 30   # Minimum 30 seconds between pings during issues
     
     consecutive_failures = 0
     last_success_time = time.time()
@@ -289,19 +292,30 @@ def self_ping():
                         # Just ignore errors on this last-ditch attempt
                         pass
             
-            # Calculate next wait time using exponential backoff
+            # Calculate next wait time using exponential backoff with jitter
             if consecutive_failures > 0:
-                # Calculate backoff with a cap
+                # Calculate backoff with a cap and add some jitter
                 wait_time = min(base_wait * (backoff_factor ** (consecutive_failures - 1)), max_wait)
-                logging.info(f"Using backoff wait of {wait_time}s after {consecutive_failures} failures")
+                # Add ±10% jitter to avoid thundering herd problems
+                jitter = 1 + (random.random() * 0.2 - 0.1)  # ±10%
+                wait_time = min(max(int(wait_time * jitter), min_wait), max_wait)
+                logging.warning(f"Using backoff wait of {wait_time}s after {consecutive_failures} failures")
             else:
-                wait_time = base_wait
+                # Add small random jitter to base wait time
+                wait_time = base_wait + random.randint(-30, 30)  # ±30 seconds
                 
-            # But if it's been too long since last success, use the minimum wait
-            if time.time() - last_success_time > 600:  # 10 minutes
+            # If it's been a while since last success, be more aggressive
+            time_since_success = time.time() - last_success_time
+            if time_since_success > 300:  # 5 minutes without success
+                wait_time = min(wait_time, min_wait * 2)
+                logging.warning(f"No successful ping for {int(time_since_success/60)} minutes, reducing wait time")
+            elif time_since_success > 600:  # 10 minutes without success
                 wait_time = min_wait
-                logging.warning(f"No successful ping for 10+ minutes, using minimum wait: {min_wait}s")
-                
+                logging.error(f"CRITICAL: No successful ping for {int(time_since_success/60)} minutes! Using minimum wait")
+            
+            # Ensure we don't wait too long
+            wait_time = max(min(wait_time, max_wait), min_wait)
+            logging.info(f"Next ping in {wait_time} seconds")
             time.sleep(wait_time)
             
         except Exception as e:
@@ -317,39 +331,51 @@ def keep_alive():
     try:
         # On Render.com, we need to use the PORT assigned by the platform
         port_to_check = int(os.getenv('PORT', 10000))
+        is_render = os.environ.get('RENDER', '').lower() == 'true'
         
-        # Check if the port is already in use
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)  # 2 second timeout
-        result = sock.connect_ex(('localhost', port_to_check))
-        sock.close()
-        
-        if result == 0:  # Port is already in use
-            logging.warning(f"Port {port_to_check} is already in use - another instance may be running")
-            logging.info("Using existing keep-alive server")
-            
-            # We'll still start the ping service to ensure the app keeps running
-            ping_thread = Thread(target=self_ping)
-            ping_thread.daemon = True
-            ping_thread.start()
-            logging.info("Self-ping service started (using existing server)")
-            
-            return True
-            
-        # Start the Flask server in a separate thread
-        server_thread = Thread(target=run)
-        server_thread.daemon = True  # Thread will close when the main program exits
-        server_thread.start()
-        
-        # Start the self-pinger in a separate thread
-        ping_thread = Thread(target=self_ping)
+        # Start the self-pinger in a separate thread (always start this first)
+        ping_thread = Thread(target=self_ping, name="KeepAlive-Ping")
         ping_thread.daemon = True
         ping_thread.start()
         logging.info("Self-ping service started")
         
+        # Only start the Flask server if we're not on Render or if we're the main instance
+        if not is_render:
+            # Check if the port is already in use
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex(('localhost', port_to_check))
+            sock.close()
+            
+            if result == 0:  # Port is already in use
+                logging.warning(f"Port {port_to_check} is already in use - using existing server")
+                return True
+                
+            # Start the Flask server in a separate thread
+            server_thread = Thread(target=run, name="Flask-Server")
+            server_thread.daemon = True
+            server_thread.start()
+            logging.info(f"Flask server started on port {port_to_check}")
+        else:
+            # On Render, we don't need to check the port - the platform handles it
+            server_thread = Thread(target=run, name="Flask-Server")
+            server_thread.daemon = True
+            server_thread.start()
+            logging.info(f"Flask server started on Render with PORT={port_to_check}")
+        
+        # Add a simple health check endpoint
+        @app.route('/ping')
+        def ping():
+            return jsonify({
+                'status': 'alive',
+                'timestamp': datetime.now().isoformat(),
+                'platform': 'Render' if is_render else 'Local',
+                'uptime': str(datetime.now() - START_TIME)
+            })
+        
         # Wait a moment to ensure the server starts properly
-        time.sleep(1)
-        logging.info("Keep-alive server started successfully")
+        time.sleep(2)
+        logging.info("Keep-alive system fully initialized")
         return True
     except Exception as e:
         logging.error(f"Failed to start keep-alive server: {e}", exc_info=True)
