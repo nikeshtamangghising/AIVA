@@ -3,6 +3,7 @@ import logging
 import asyncio
 import os
 import time
+import telegram  # Import the telegram module
 import csv
 import json
 import socket
@@ -2280,8 +2281,8 @@ def initialize_bot_safely():
 
 
 async def main_async():
-    """Async entry point for the bot."""
-    is_render = os.environ.get('RENDER', '') == 'true'
+    """Async entry point for the bot with enhanced conflict handling."""
+    is_render = os.environ.get('RENDER', '').lower() in ('true', '1', 't')
     if is_render:
         logging.info("Detected Render.com environment - using specialized setup")
         port = os.environ.get('PORT', '10000')
@@ -2291,10 +2292,39 @@ async def main_async():
         render_service = os.environ.get('RENDER_SERVICE_NAME', 'unknown')
         logging.info(f"Running as Render service: {render_service}, instance: {render_instance}")
     
-    # Initialize the bot application
-    application = initialize_bot_safely()
+    # Initialize the bot application with retry logic
+    max_retries = 5
+    retry_delay = 5  # seconds
+    application = None
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            logging.info(f"Initializing bot application (attempt {attempt}/{max_retries})...")
+            application = initialize_bot_safely()
+            if not application:
+                raise Exception("Failed to initialize bot application")
+                
+            # Check if another instance is already running
+            if check_bot_already_running(BOT_TOKEN):
+                if attempt < max_retries:
+                    logging.warning(f"Another bot instance appears to be running. Retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    raise Exception("Maximum retries reached. Another bot instance appears to be running.")
+            
+            # If we got here, initialization was successful
+            break
+            
+        except Exception as e:
+            if attempt >= max_retries:
+                logging.error(f"Failed to initialize bot after {max_retries} attempts: {e}")
+                return
+            logging.warning(f"Attempt {attempt} failed: {e}. Retrying in {retry_delay} seconds...")
+            await asyncio.sleep(retry_delay)
+    
     if not application:
-        logging.error("Failed to initialize bot. Exiting.")
+        logging.error("Failed to initialize bot application. Exiting.")
         return
     
     # Start the Flask server in a separate thread if on Render
@@ -2313,16 +2343,38 @@ async def main_async():
         logging.info("Flask keep-alive server started in background thread")
     
     try:
-        # Start the bot
-        logging.info("Starting Telegram bot...")
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        logging.info("Bot started successfully")
+        # Start the bot with error handling
+        max_start_attempts = 3
+        started = False
         
-        # Keep the coroutine alive
+        for attempt in range(1, max_start_attempts + 1):
+            try:
+                logging.info(f"Starting Telegram bot (attempt {attempt}/{max_start_attempts})...")
+                await application.initialize()
+                await application.start()
+                await application.updater.start_polling(drop_pending_updates=True)  # Drop pending updates to avoid conflicts
+                logging.info("Bot started successfully")
+                started = True
+                break
+            except telegram.error.Conflict as e:
+                if attempt >= max_start_attempts:
+                    raise
+                wait_time = attempt * 5  # Exponential backoff
+                logging.warning(f"Bot conflict detected. Waiting {wait_time} seconds before retry...")
+                await asyncio.sleep(wait_time)
+        
+        if not started:
+            raise Exception("Failed to start bot after multiple attempts")
+        
+        # Keep the coroutine alive with periodic health checks
         while True:
-            await asyncio.sleep(3600)  # Sleep for 1 hour
+            try:
+                # Verify the bot is still running
+                await application.bot.get_me()
+                await asyncio.sleep(300)  # Check every 5 minutes
+            except Exception as e:
+                logging.error(f"Bot health check failed: {e}")
+                raise
             
     except asyncio.CancelledError:
         logging.info("Received cancellation, shutting down...")
