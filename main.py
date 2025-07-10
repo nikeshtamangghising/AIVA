@@ -2281,48 +2281,18 @@ def initialize_bot_safely():
 
 
 async def main_async():
-    """Async entry point for the bot with enhanced conflict handling."""
+    """Async entry point for the bot with webhook support and enhanced conflict handling."""
     is_render = os.environ.get('RENDER', '').lower() in ('true', '1', 't')
+    port = int(os.environ.get('PORT', '10000'))
+    
     if is_render:
-        logging.info("Detected Render.com environment - using specialized setup")
-        port = os.environ.get('PORT', '10000')
-        os.environ['PORT'] = port
-        logging.info(f"Using PORT: {port}")
+        logging.info("Detected Render.com environment - using webhook mode")
         render_instance = os.environ.get('RENDER_INSTANCE_ID', 'unknown')
         render_service = os.environ.get('RENDER_SERVICE_NAME', 'unknown')
         logging.info(f"Running as Render service: {render_service}, instance: {render_instance}")
     
-    # Initialize the bot application with retry logic
-    max_retries = 5
-    retry_delay = 5  # seconds
-    application = None
-    
-    for attempt in range(1, max_retries + 1):
-        try:
-            logging.info(f"Initializing bot application (attempt {attempt}/{max_retries})...")
-            application = initialize_bot_safely()
-            if not application:
-                raise Exception("Failed to initialize bot application")
-                
-            # Check if another instance is already running
-            if check_bot_already_running(BOT_TOKEN):
-                if attempt < max_retries:
-                    logging.warning(f"Another bot instance appears to be running. Retrying in {retry_delay} seconds...")
-                    await asyncio.sleep(retry_delay)
-                    continue
-                else:
-                    raise Exception("Maximum retries reached. Another bot instance appears to be running.")
-            
-            # If we got here, initialization was successful
-            break
-            
-        except Exception as e:
-            if attempt >= max_retries:
-                logging.error(f"Failed to initialize bot after {max_retries} attempts: {e}")
-                return
-            logging.warning(f"Attempt {attempt} failed: {e}. Retrying in {retry_delay} seconds...")
-            await asyncio.sleep(retry_delay)
-    
+    # Initialize the bot application
+    application = initialize_bot_safely()
     if not application:
         logging.error("Failed to initialize bot application. Exiting.")
         return
@@ -2341,30 +2311,70 @@ async def main_async():
         flask_thread = threading.Thread(target=start_flask, daemon=True)
         flask_thread.start()
         logging.info("Flask keep-alive server started in background thread")
+        
+        # Use webhook for Render
+        webhook_url = f"https://{os.environ.get('RENDER_SERVICE_NAME')}.onrender.com"
+        webhook_path = f"/webhook_{BOT_TOKEN.split(':')[0]}"  # Use bot token hash as webhook path
+        
+        try:
+            # Remove any existing webhook first
+            await application.bot.delete_webhook()
+            
+            # Set webhook
+            await application.bot.set_webhook(
+                url=f"{webhook_url}{webhook_path}",
+                secret_token=os.environ.get('WEBHOOK_SECRET', 'your-secret-token')
+            )
+            logging.info(f"Webhook set to: {webhook_url}{webhook_path}")
+            
+            # Start webhook server
+            await application.initialize()
+            await application.start()
+            
+            # Start webhook with aiohttp
+            from aiohttp import web
+            
+            async def handle_webhook(request):
+                if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != os.environ.get('WEBHOOK_SECRET', 'your-secret-token'):
+                    return web.Response(status=403)
+                
+                if request.body_exists:
+                    data = await request.json()
+                    update = telegram.Update.de_json(data, application.bot)
+                    await application.process_update(update)
+                return web.Response()
+            
+            app = web.Application()
+            app.router.add_post(webhook_path, handle_webhook)
+            
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, '0.0.0.0', port)
+            await site.start()
+            
+            logging.info(f"Webhook server started on port {port}")
+            
+            # Keep the application running
+            while True:
+                await asyncio.sleep(3600)  # Sleep for 1 hour
+                
+        except Exception as e:
+            logging.error(f"Error in webhook setup: {e}")
+            raise
     
+    # If not on Render, use polling
     try:
-        # Start the bot with error handling
-        max_start_attempts = 3
-        started = False
+        logging.info("Starting bot in polling mode...")
+        await application.initialize()
+        await application.start()
         
-        for attempt in range(1, max_start_attempts + 1):
-            try:
-                logging.info(f"Starting Telegram bot (attempt {attempt}/{max_start_attempts})...")
-                await application.initialize()
-                await application.start()
-                await application.updater.start_polling(drop_pending_updates=True)  # Drop pending updates to avoid conflicts
-                logging.info("Bot started successfully")
-                started = True
-                break
-            except telegram.error.Conflict as e:
-                if attempt >= max_start_attempts:
-                    raise
-                wait_time = attempt * 5  # Exponential backoff
-                logging.warning(f"Bot conflict detected. Waiting {wait_time} seconds before retry...")
-                await asyncio.sleep(wait_time)
-        
-        if not started:
-            raise Exception("Failed to start bot after multiple attempts")
+        # Use a unique offset to avoid conflicts
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        await application.updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=telegram.ext.Updater.ALL_TYPES
+        )
+        logging.info("Bot started in polling mode")
         
         # Keep the coroutine alive with periodic health checks
         while True:
